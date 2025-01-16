@@ -1,0 +1,95 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+
+model User {
+  id String @id @default(cuid())
+  name String 
+  password String
+  email    String @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  bio String?
+  @@index([email])
+  @@index([name])
+  ownedBooks Book[]
+  sentRequests     ExchangeRequest[] @relation("SentRequests")
+  receivedRequests ExchangeRequest[] @relation("ReceivedRequests")
+}
+
+model Book {
+  id String @id @default(cuid())
+  title String
+  author String
+  genre Genre
+  condition Condition
+  isbn String?
+  description String?
+  owner  User @relation(fields: [ownerId], references: [id])
+  ownerId String 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+   exchangeRequests ExchangeRequest[] @relation("RequestedBook")
+
+}
+
+model ExchangeRequest {
+  id          String    @id @default(cuid())
+  status      RequestStatus @default(PENDING)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  message     String?
+  requestedBook Book     @relation("RequestedBook", fields: [requestedBookId], references: [id])
+  requestedBookId String
+  sender      User      @relation("SentRequests", fields: [senderId], references: [id])
+  senderId    String
+  receiver    User      @relation("ReceivedRequests", fields: [receiverId], references: [id])
+  receiverId  String
+
+  @@map("exchange_requests")
+}
+enum Genre {
+  FICTION
+  NON_FICTION
+  MYSTERY
+  SCIENCE_FICTION
+  FANTASY
+  ROMANCE
+  THRILLER
+  HORROR
+  BIOGRAPHY
+  HISTORY
+  SCIENCE
+  TECHNOLOGY
+  OTHER
+}
+
+enum Condition {
+  NEW
+  LIKE_NEW
+  VERY_GOOD
+  GOOD
+  FAIR
+  POOR
+}
+
+enum RequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
