@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { bookMetaType, SearchParams } from "../types/book";
+import { bookMetaType, exchangeMeta, SearchParams } from "../types/book";
 import { string } from "zod";
 
 export class bookServices {
@@ -63,28 +63,27 @@ export class bookServices {
           genre: bookMeta.genre,
           condition: bookMeta.condition,
           author: bookMeta.author,
-         owner:{
-          connect:{
-            id:bookMeta.ownerId
-          }
-         }
+          owner: {
+            connect: {
+              id: bookMeta.ownerId,
+            },
+          },
         },
       });
 
-      return book
+      return book;
     } catch (error) {
       throw new Error("Error while creating book: " + error);
-
     }
   }
- async getBooksByUser(userId: string) {
+  async getBooksByUser(userId: string) {
     try {
       const userExist = await this.prisma.user.findUnique({
         where: {
           id: userId,
         },
       });
-      if(!userExist){ 
+      if (!userExist) {
         throw new Error("User not found");
       }
       const books = await this.prisma.book.findMany({
@@ -118,7 +117,6 @@ export class bookServices {
         where: {
           id: bookId,
           ownerId: bookMeta.ownerId,
-       
         },
       });
       if (!book) {
@@ -137,28 +135,56 @@ export class bookServices {
         },
       });
       return updatedBook;
-    } catch (error) { 
+    } catch (error) {
       throw new Error("Error while updating book: " + error);
     }
   }
-  async getAllBooks(userId:string){
+  async findAvailableBooks(userId: string, genre?: string) {
     try {
       const books = await this.prisma.book.findMany({
-        where:{
-          ownerId:{
-            not:userId
-          }
-        }
-      })
-      return books
+        where: {
+          ownerId: { not: userId }, 
+          exchangeRequests: {
+            none: { status: "ACCEPTED" }, 
+          },
+         
+        },
+        include: {
+          owner: { select: { name: true } },
+        },
+      });
+  
+      return books;
     } catch (error) {
-      throw new Error("Error while getting book:" + error)
-      
+      throw new Error("Error while fetching available books: " + error);
     }
-
+  }
+  
+  async deleteBook(bookId: string, userId: string) {
+    try {
+      const book = await this.prisma.book.findUnique({
+        where: {
+          id: bookId,
+        },
+      });
+      if (!book) {
+        throw new Error("Book not found");
+      }
+      if (book.ownerId !== userId) {
+        throw new Error("You are not authorized to delete this book");
+      }
+      await this.prisma.book.delete({
+        where: {
+          id: bookId,
+        },
+      });
+      return "Book deleted successfully";
+    } catch (error) {
+      throw new Error("Error while deleting book:" + error);
+    }
   }
 
-  async searchByName(params:SearchParams){
+  async searchBooks(params: SearchParams) {
     const page = params.page || 1;
     const pageSize = params.pageSize || 10;
     const skip = (page - 1) * pageSize;
@@ -169,22 +195,22 @@ export class bookServices {
           {
             title: {
               contains: params.keyword,
-              mode: 'insensitive' 
-            }
+              mode: "insensitive",
+            },
           },
           {
             author: {
               contains: params.keyword,
-              mode: 'insensitive'
-            }
-          }
-        ]
+              mode: "insensitive",
+            },
+          },
+        ],
       };
     }
     if (params.genre) {
       whereClause.genre = params.genre;
     }
-    
+
     if (params.condition) {
       whereClause.condition = params.condition;
     }
@@ -196,18 +222,18 @@ export class bookServices {
         include: {
           owner: {
             select: {
-              name: true
-            }
-          }
+              name: true,
+            },
+          },
         },
         orderBy: {
-          createdAt: 'desc' 
-        }
-      })
+          createdAt: "desc",
+        },
+      });
       const count = await this.prisma.book.count({
-        where: whereClause
-      })
-      
+        where: whereClause,
+      });
+
       const totalPages = Math.ceil(count / pageSize);
       return {
         books,
@@ -217,13 +243,77 @@ export class bookServices {
           count,
           totalPages,
           hasNextPage: page < totalPages,
-          hasPreviousPage: page > 1
-        }
+          hasPreviousPage: page > 1,
+        },
       };
-      
     } catch (error) {
-      throw new Error("Error while searching book: " + error)
-      
+      throw new Error("Error while searching book: " + error);
     }
   }
+  async sendExchangeRequest(exchangeMeta:exchangeMeta) {
+    try {
+   
+      const book = await this.prisma.book.findUnique({
+        where: { id: exchangeMeta.bookId },
+        include: {
+          exchangeRequests: {
+            where: { status: "ACCEPTED" },
+          },
+        },
+      });
+  
+      if (!book) throw new Error("Book not found");
+      if (book.ownerId === exchangeMeta.senderId) throw new Error("You cannot request your own book");
+      if (book.exchangeRequests.length > 0) throw new Error("This book is already exchanged");
+  
+
+      const request = await this.prisma.exchangeRequest.create({
+        data: {
+          senderId:exchangeMeta.senderId,
+          receiverId:exchangeMeta.receiverId,
+          requestedBookId: exchangeMeta.bookId,
+          message:exchangeMeta.message,
+          status: "PENDING",
+        },
+      });
+  
+      return request;
+    } catch (error) {
+      throw new Error("Error while sending exchange request: " + error);
+    }
+  }
+  async acceptExchangeRequest(requestId: string) {
+    try {
+
+      const request = await this.prisma.exchangeRequest.findUnique({
+        where: { id: requestId },
+        include: {
+          requestedBook: {
+            include: {
+              exchangeRequests: { where: { status: "ACCEPTED" } },
+            },
+          },
+        },
+      });
+  
+      if (!request) throw new Error("Exchange request not found");
+  
+      if (request.requestedBook.exchangeRequests.length > 0) {
+        throw new Error("The book is already exchanged");
+      }
+  
+
+      const updatedRequest = await this.prisma.exchangeRequest.update({
+        where: { id: requestId },
+        data: { status: "ACCEPTED" },
+      });
+  
+      return updatedRequest;
+    } catch (error) {
+      throw new Error("Error while accepting exchange request: " + error);
+    }
+  }
+  
+  
+  
 }
